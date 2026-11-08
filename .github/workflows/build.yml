@@ -1,0 +1,22 @@
+# Checks that the plugin compiles and the service imports on every push / PR.
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - run: dotnet build plugin/Jellyfin.Plugin.ForcedSubs/Jellyfin.Plugin.ForcedSubs.csproj -c Release
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Byte-compile service
+        run: python -m compileall -q service/forced_subs

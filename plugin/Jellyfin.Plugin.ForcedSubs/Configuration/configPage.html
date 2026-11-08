@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Forced Subtitles</title>
+</head>
+<body>
+<div id="ForcedSubsConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-checkbox">
+    <div data-role="content">
+        <div class="content-primary">
+            <h2 class="sectionTitle">Forced Subtitles</h2>
+            <p>Finds the foreign-language lines in a movie and writes a forced English subtitle
+               (<code>Movie.en.forced.srt</code>) next to it. The transcription runs in the local
+               Whisper service on this machine.</p>
+            <p id="fsHealth" style="font-weight:600;">Checking service…</p>
+
+            <h3 class="sectionTitle" style="margin-top:2em;">Generate</h3>
+            <div class="inputContainer">
+                <input is="emby-input" type="search" id="fsSearch" label="Search movies and episodes" autocomplete="off" />
+            </div>
+            <label class="checkboxContainer">
+                <input is="emby-checkbox" type="checkbox" id="fsOverwrite" />
+                <span>Redo even if the movie already has forced subtitles</span>
+            </label>
+            <div id="fsResults"></div>
+
+            <h3 class="sectionTitle" style="margin-top:2em;">Recent jobs</h3>
+            <div id="fsJobs"><p>No jobs yet.</p></div>
+
+            <h3 class="sectionTitle" style="margin-top:2em;">Settings</h3>
+            <form id="fsConfigForm">
+                <div class="inputContainer">
+                    <input is="emby-input" type="url" id="fsServiceUrl" label="Service address" />
+                    <div class="fieldDescription">Where the forced-subtitle service listens. Default: http://127.0.0.1:8796</div>
+                </div>
+                <label class="checkboxContainer">
+                    <input is="emby-checkbox" type="checkbox" id="fsIncludeEpisodes" />
+                    <span>Library task also processes TV episodes</span>
+                </label>
+                <label class="checkboxContainer">
+                    <input is="emby-checkbox" type="checkbox" id="fsRetryFailed" />
+                    <span>Library task retries items that failed before</span>
+                </label>
+                <p class="fieldDescription">To process the whole library, run <b>Generate forced subtitles</b> under
+                   Dashboard &gt; Scheduled Tasks, or give it a schedule there.</p>
+                <button is="emby-button" type="submit" class="raised button-submit block"><span>Save</span></button>
+            </form>
+        </div>
+    </div>
+
+    <style>
+        #fsResults .fsRow, #fsJobs .fsRow { display:flex; align-items:center; gap:1em; padding:.6em 0; border-bottom:1px solid rgba(128,128,128,.25); }
+        .fsRow .fsMain { flex:1; min-width:0; }
+        .fsRow .fsName { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .fsRow .fsSub { opacity:.7; font-size:.9em; overflow:hidden; text-overflow:ellipsis; }
+        .fsBar { height:4px; background:rgba(128,128,128,.3); border-radius:2px; margin-top:.3em; }
+        .fsBar > div { height:100%; background:#00a4dc; border-radius:2px; }
+        .fsTag { font-size:.8em; padding:.1em .5em; border-radius:1em; background:rgba(128,128,128,.25); white-space:nowrap; }
+        .fsRow button { margin:0; }
+    </style>
+
+    <script type="text/javascript">
+        (function () {
+            var pluginId = '221cf741-9df3-4388-ad06-8761cce21b32';
+            var page = document.querySelector('#ForcedSubsConfigPage');
+            var pollTimer = null;
+            var searchTimer = null;
+
+            function esc(s) {
+                return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+                    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+                });
+            }
+
+            function api(method, path, params) {
+                return ApiClient.ajax({ type: method, url: ApiClient.getUrl(path, params || {}), dataType: 'json' });
+            }
+
+            function checkHealth() {
+                var el = page.querySelector('#fsHealth');
+                api('GET', 'ForcedSubs/Health').then(function (h) {
+                    el.textContent = 'Service connected · model ' + h.model + (h.model_loaded ? ' (loaded on GPU)' : ' (idle)') +
+                        (h.queued ? ' · ' + h.queued + ' queued' : '');
+                    el.style.color = '';
+                }, function () {
+                    el.textContent = 'Can’t reach the forced-subtitle service. Is it running? Check the service address below.';
+                    el.style.color = '#e05050';
+                });
+            }
+
+            function search() {
+                var term = page.querySelector('#fsSearch').value.trim();
+                var box = page.querySelector('#fsResults');
+                if (!term) { box.innerHTML = ''; return; }
+                api('GET', 'ForcedSubs/Search', { term: term }).then(function (items) {
+                    if (!items.length) { box.innerHTML = '<p>No matches.</p>'; return; }
+                    box.innerHTML = items.map(function (it) {
+                        return '<div class="fsRow"><div class="fsMain"><div class="fsName">' + esc(it.Name) + '</div>' +
+                            '<div class="fsSub">' + esc(it.Path) + '</div></div>' +
+                            (it.HasForcedFile ? '<span class="fsTag">has forced subs</span>' : '') +
+                            '<button is="emby-button" type="button" class="raised button-submit" data-id="' + esc(it.Id) + '"><span>Generate</span></button></div>';
+                    }).join('');
+                });
+            }
+
+            function generate(btn) {
+                var overwrite = page.querySelector('#fsOverwrite').checked;
+                btn.disabled = true;
+                api('POST', 'ForcedSubs/Generate/' + btn.getAttribute('data-id'), { overwrite: overwrite }).then(function () {
+                    btn.querySelector('span').textContent = 'Queued';
+                    Dashboard.alert('Queued. Progress shows under Recent jobs.');
+                    loadJobs();
+                }, function (err) {
+                    btn.disabled = false;
+                    Dashboard.alert('Could not queue the job. Is the service running?');
+                });
+            }
+
+            function statusText(j) {
+                if (j.Status === 'running') return esc(j.Stage) + ' · ' + Math.round(j.Progress * 100) + '%';
+                if (j.Status === 'queued') return 'Waiting';
+                return esc(j.Message || j.Status);
+            }
+
+            function loadJobs() {
+                api('GET', 'ForcedSubs/Jobs', { limit: 25 }).then(function (jobs) {
+                    var box = page.querySelector('#fsJobs');
+                    if (!jobs.length) { box.innerHTML = '<p>No jobs yet.</p>'; return; }
+                    box.innerHTML = jobs.map(function (j) {
+                        var bar = j.Status === 'running'
+                            ? '<div class="fsBar"><div style="width:' + Math.round(j.Progress * 100) + '%"></div></div>' : '';
+                        return '<div class="fsRow"><div class="fsMain"><div class="fsName">' + esc(j.Name) + '</div>' +
+                            '<div class="fsSub">' + statusText(j) + '</div>' + bar + '</div>' +
+                            '<span class="fsTag">' + esc(j.Status) + '</span></div>';
+                    }).join('');
+                }, function () { });
+            }
+
+            function loadConfig() {
+                ApiClient.getPluginConfiguration(pluginId).then(function (c) {
+                    page.querySelector('#fsServiceUrl').value = c.ServiceUrl || '';
+                    page.querySelector('#fsIncludeEpisodes').checked = !!c.IncludeEpisodes;
+                    page.querySelector('#fsRetryFailed').checked = !!c.RetryFailed;
+                });
+            }
+
+            page.addEventListener('pageshow', function () {
+                loadConfig();
+                checkHealth();
+                loadJobs();
+                clearInterval(pollTimer);
+                pollTimer = setInterval(function () { loadJobs(); checkHealth(); }, 3000);
+            });
+
+            page.addEventListener('pagehide', function () { clearInterval(pollTimer); });
+
+            page.querySelector('#fsSearch').addEventListener('input', function () {
+                clearTimeout(searchTimer);
+                searchTimer = setTimeout(search, 300);
+            });
+
+            page.querySelector('#fsResults').addEventListener('click', function (e) {
+                var btn = e.target.closest('button[data-id]');
+                if (btn) generate(btn);
+            });
+
+            page.querySelector('#fsConfigForm').addEventListener('submit', function (e) {
+                e.preventDefault();
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(pluginId).then(function (c) {
+                    c.ServiceUrl = page.querySelector('#fsServiceUrl').value.trim();
+                    c.IncludeEpisodes = page.querySelector('#fsIncludeEpisodes').checked;
+                    c.RetryFailed = page.querySelector('#fsRetryFailed').checked;
+                    ApiClient.updatePluginConfiguration(pluginId, c).then(function (r) {
+                        Dashboard.processPluginConfigurationUpdateResult(r);
+                        checkHealth();
+                    });
+                });
+                return false;
+            });
+        })();
+    </script>
+</div>
+</body>
+</html>

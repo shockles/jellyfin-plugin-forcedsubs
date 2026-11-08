@@ -1,0 +1,17 @@
+# .NET
+bin/
+obj/
+plugin/dist/
+*.user
+
+# Python service
+service/.venv/
+service/data/
+__pycache__/
+*.pyc
+
+# OS / editors
+.vs/
+.vscode/
+Thumbs.db
+.DS_Store

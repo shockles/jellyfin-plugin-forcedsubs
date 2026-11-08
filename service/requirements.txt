@@ -1,0 +1,6 @@
+faster-whisper>=1.2,<2
+fastapi>=0.115
+uvicorn[standard]>=0.30
+# CUDA libraries CTranslate2 needs on Windows (no separate CUDA toolkit install required)
+nvidia-cublas-cu12
+nvidia-cudnn-cu12==9.*

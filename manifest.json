@@ -1,0 +1,12 @@
+[
+  {
+    "guid": "221cf741-9df3-4388-ad06-8761cce21b32",
+    "name": "Forced Subtitles (Whisper)",
+    "description": "Translates only the foreign-language lines of a movie into a forced English subtitle, using a local Whisper service.",
+    "overview": "Forced English subtitles for foreign dialogue, generated locally with Whisper",
+    "owner": "shockles",
+    "category": "Subtitles",
+    "imageUrl": "",
+    "versions": []
+  }
+]

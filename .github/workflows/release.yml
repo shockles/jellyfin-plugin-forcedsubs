@@ -1,0 +1,70 @@
+# Push a tag like v0.1.0 to build the plugin, publish a GitHub release with the
+# plugin and service zips, and add the version to manifest.json so Jellyfin
+# servers using this repository see the update.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Work out version
+        id: v
+        run: |
+          SEMVER="${GITHUB_REF_NAME#v}"
+          echo "semver=$SEMVER" >> "$GITHUB_OUTPUT"
+          echo "full=$SEMVER.0" >> "$GITHUB_OUTPUT"
+          # Changelog = the tag's annotation message, if any
+          MSG=$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME")
+          { echo "changelog<<EOF"; echo "$MSG"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+
+      - name: Build plugin
+        run: >
+          dotnet build plugin/Jellyfin.Plugin.ForcedSubs/Jellyfin.Plugin.ForcedSubs.csproj -c Release
+          -p:AssemblyVersion=${{ steps.v.outputs.full }} -p:FileVersion=${{ steps.v.outputs.full }}
+
+      - name: Package
+        run: |
+          mkdir -p out
+          zip -j "out/forced-subs-plugin_${{ steps.v.outputs.full }}.zip" \
+            plugin/Jellyfin.Plugin.ForcedSubs/bin/Release/net10.0/Jellyfin.Plugin.ForcedSubs.dll
+          (cd service && zip -r "../out/forced-subs-service_${{ steps.v.outputs.semver }}.zip" . \
+            -x ".venv/*" "data/*" "*__pycache__*")
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" out/*.zip
+          --title "Forced Subtitles ${{ steps.v.outputs.semver }}"
+          --generate-notes
+
+      - name: Update manifest.json on main
+        env:
+          CHANGELOG: ${{ steps.v.outputs.changelog }}
+        run: |
+          git fetch origin main
+          git checkout -B main origin/main
+          python3 .github/scripts/update_manifest.py manifest.json "${{ steps.v.outputs.full }}" \
+            "out/forced-subs-plugin_${{ steps.v.outputs.full }}.zip" \
+            "https://github.com/${{ github.repository }}/releases/download/${GITHUB_REF_NAME}/forced-subs-plugin_${{ steps.v.outputs.full }}.zip" \
+            "$CHANGELOG"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add manifest.json
+          git commit -m "Add ${{ steps.v.outputs.full }} to manifest"
+          git push origin main
