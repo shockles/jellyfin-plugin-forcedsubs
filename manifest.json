@@ -10,7 +10,7 @@
     "versions": [
       {
         "version": "0.1.0.0",
-        "changelog": "Forced Subtitles plugin for Jellyfin 12.4\n\nJellyfin plugin plus a local faster-whisper service that finds foreign-language\nlines in a movie, translates them to English, and writes Movie.en.forced.srt.\nIncludes a plugin repository manifest and GitHub Actions release workflow.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>",
+        "changelog": "First release: generate forced English subtitles for foreign-language lines with a local Whisper service. Dashboard page with a Generate button and a library-wide scheduled task.",
         "targetAbi": "12.4.0.0",
         "sourceUrl": "https://github.com/shockles/jellyfin-plugin-forcedsubs/releases/download/v0.1.0/forced-subs-plugin_0.1.0.0.zip",
         "checksum": "2b807092016bdf70205d34476c954c2d",

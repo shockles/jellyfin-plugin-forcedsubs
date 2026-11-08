@@ -28,8 +28,10 @@ jobs:
           SEMVER="${GITHUB_REF_NAME#v}"
           echo "semver=$SEMVER" >> "$GITHUB_OUTPUT"
           echo "full=$SEMVER.0" >> "$GITHUB_OUTPUT"
-          # Changelog = the tag's annotation message, if any
-          MSG=$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME")
+          # Changelog = the tag's annotation message, if any. actions/checkout turns
+          # annotated tags into lightweight ones, so re-fetch the real tag first.
+          git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          MSG=$(git tag -l --format='%(contents:subject)%0a%0a%(contents:body)' "$GITHUB_REF_NAME")
           { echo "changelog<<EOF"; echo "$MSG"; echo "EOF"; } >> "$GITHUB_OUTPUT"
 
       - name: Build plugin
