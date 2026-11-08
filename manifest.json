@@ -9,6 +9,14 @@
     "imageUrl": "",
     "versions": [
       {
+        "version": "0.2.1.0",
+        "changelog": "One-click Windows installer (Install-ForcedSubs.bat) attached to the release. Installer fixes: no longer mistakes the Microsoft Store python shortcut for Python, and the service finds a newly installed ffmpeg at logon.",
+        "targetAbi": "12.4.0.0",
+        "sourceUrl": "https://github.com/shockles/jellyfin-plugin-forcedsubs/releases/download/v0.2.1/forced-subs-plugin_0.2.1.0.zip",
+        "checksum": "078e7f500778051269cf2f21567161bb",
+        "timestamp": "2026-11-08T07:12:45Z"
+      },
+      {
         "version": "0.2.0.0",
         "changelog": "Full subtitles and 97 subtitle languages (translated with NLLB-200), 50+ settings including auto-processing of new items, cancel, API key and path mapping, plus many fixes.",
         "targetAbi": "12.4.0.0",
