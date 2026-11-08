@@ -9,6 +9,14 @@
     "imageUrl": "",
     "versions": [
       {
+        "version": "0.2.0.0",
+        "changelog": "Full subtitles and 97 subtitle languages (translated with NLLB-200), 50+ settings including auto-processing of new items, cancel, API key and path mapping, plus many fixes.",
+        "targetAbi": "12.4.0.0",
+        "sourceUrl": "https://github.com/shockles/jellyfin-plugin-forcedsubs/releases/download/v0.2.0/forced-subs-plugin_0.2.0.0.zip",
+        "checksum": "dae19083df6b8c23b61f6c22e02378b5",
+        "timestamp": "2026-11-08T06:43:14Z"
+      },
+      {
         "version": "0.1.0.0",
         "changelog": "First release: generate forced English subtitles for foreign-language lines with a local Whisper service. Dashboard page with a Generate button and a library-wide scheduled task.",
         "targetAbi": "12.4.0.0",
