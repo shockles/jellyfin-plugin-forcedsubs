@@ -140,11 +140,16 @@ public sealed class JobMonitor : BackgroundService
             try
             {
                 var job = await SubmitAsync(item, overwrite: false, ct).ConfigureAwait(false);
-                _logger.LogInformation("Auto-queued forced subtitles for {Name} (job {JobId})", item.Name, job.Id);
+                _logger.LogInformation("Auto-queued subtitles for {Name} (job {JobId})", item.Name, job.Id);
             }
-            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            catch (HttpRequestException ex) when (ex.StatusCode is { } code && (int)code < 500)
             {
-                // Service down: try again in a minute.
+                // The service answered but refused (e.g. file not found: check path mappings). Don't retry.
+                _logger.LogWarning("Service refused {Name}: {Message}", item.Name, ex.Message);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested && ex is HttpRequestException or TaskCanceledException)
+            {
+                // Service down or busy: try again in a minute.
                 _autoQueue[id] = now.AddMinutes(1);
                 _logger.LogDebug(ex, "Service unreachable; will retry {Name}", item.Name);
             }
@@ -180,8 +185,13 @@ public sealed class JobMonitor : BackgroundService
         {
             if (!byId.TryGetValue(jobId, out var job))
             {
-                _pending.TryRemove(jobId, out _); // fell out of the service's recent list
-                continue;
+                // Not among the newest 200 (long queue): ask for it directly.
+                job = await _client.JobAsync(jobId, ct).ConfigureAwait(false);
+                if (job is null)
+                {
+                    _pending.TryRemove(jobId, out _); // the service no longer knows it (restarted)
+                    continue;
+                }
             }
 
             if (job.IsActive)

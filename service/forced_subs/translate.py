@@ -83,9 +83,25 @@ _SENT_END = re.compile(r"(?<=[.!?…。！？])\s+")
 _DIALOG_DASH = re.compile(r"^\s*[-–—]\s*")
 
 
+# Words ending in a period that don't end a sentence.
+_ABBREVIATIONS = {
+    "mr.", "mrs.", "ms.", "dr.", "st.", "jr.", "sr.", "prof.", "sgt.", "lt.", "col.", "capt.", "gen.",
+    "vs.", "etc.", "e.g.", "i.e.", "no.", "mt.", "ft.", "approx.", "dept.", "u.s.", "u.k.",
+}
+
+
 def split_sentences(text: str) -> list[str]:
     parts = [p.strip() for p in _SENT_END.split(text.strip()) if p.strip()]
-    return parts or [text.strip()]
+    merged: list[str] = []
+    for p in parts:
+        if merged:
+            last_word = merged[-1].rsplit(None, 1)[-1].lower()
+            # "Mr." / "Dr." / a lone initial like "J." doesn't end the sentence.
+            if last_word in _ABBREVIATIONS or re.fullmatch(r"[a-z]\.", last_word):
+                merged[-1] = f"{merged[-1]} {p}"
+                continue
+        merged.append(p)
+    return merged or [text.strip()]
 
 
 def _trim_extra(translated: str, source: str) -> str:

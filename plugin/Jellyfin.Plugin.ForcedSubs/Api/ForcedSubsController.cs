@@ -111,7 +111,8 @@ public class ForcedSubsController : ControllerBase
         {
             return await call().ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException or System.Text.Json.JsonException)
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException
+                                       or System.Text.Json.JsonException or UriFormatException)
         {
             return StatusCode(StatusCodes.Status502BadGateway, new { ok = false, error = ex.Message });
         }

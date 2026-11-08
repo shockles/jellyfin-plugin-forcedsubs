@@ -111,7 +111,7 @@ class JobRunner:
             for jid in reversed(self.order):
                 j = self.jobs[jid]
                 if os.path.normcase(j["path"]) == key and j["status"] in ACTIVE:
-                    return dict(j)
+                    return self._public(j)
             jid = uuid.uuid4().hex[:12]
             job = {
                 "id": jid, "path": path, "item_id": req.item_id, "overwrite": req.overwrite,
@@ -218,11 +218,14 @@ class JobRunner:
                 self._update(jid, finished=time.time())
                 done = self.get(jid)
                 if done and done["status"] != "cancelled":
-                    self.history.put(done["path"], {
-                        "status": done["status"], "stage": done["stage"], "message": done["message"],
-                        "output": done["output"], "finished": done["finished"],
-                        "signature": done.get("signature"),
-                    })
+                    try:
+                        self.history.put(done["path"], {
+                            "status": done["status"], "stage": done["stage"], "message": done["message"],
+                            "output": done["output"], "finished": done["finished"],
+                            "signature": done.get("signature"),
+                        })
+                    except Exception:  # noqa: BLE001 - a history write must never kill the worker
+                        log.exception("Could not save history for %s", done["path"])
 
 
 def create_app(runner: JobRunner, api_key: Optional[str]) -> FastAPI:

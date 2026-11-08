@@ -61,8 +61,18 @@ public class ForcedSubsClient
         => await Http().GetFromJsonAsync<List<ServiceJob>>($"{BaseUrl}/jobs?limit={limit}", Json, ct).ConfigureAwait(false)
            ?? new List<ServiceJob>();
 
-    public Task<ServiceJob?> JobAsync(string id, CancellationToken ct)
-        => Http().GetFromJsonAsync<ServiceJob>($"{BaseUrl}/jobs/{Uri.EscapeDataString(id)}", Json, ct);
+    /// <summary>One job, or null if the service doesn't know it (e.g. it restarted and lost its in-memory jobs).</summary>
+    public async Task<ServiceJob?> JobAsync(string id, CancellationToken ct)
+    {
+        using var resp = await Http().GetAsync($"{BaseUrl}/jobs/{Uri.EscapeDataString(id)}", ct).ConfigureAwait(false);
+        if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+
+        await EnsureOk(resp, ct).ConfigureAwait(false);
+        return await resp.Content.ReadFromJsonAsync<ServiceJob>(Json, ct).ConfigureAwait(false);
+    }
 
     public async Task<ServiceJob?> CancelAsync(string id, CancellationToken ct)
     {

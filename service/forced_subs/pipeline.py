@@ -335,7 +335,9 @@ class ExistingSubs:
     def covers(self, out: Output, s: Settings) -> Optional[str]:
         forced = out.mode == "forced"
         if forced:
-            if s.skip_if_embedded_forced and any(f and lang in (out.lang, "") for lang, f in self.embedded):
+            # An untagged forced track is assumed to be in the movie's main language.
+            if s.skip_if_embedded_forced and any(
+                    f and (lang or s.main_language) == out.lang for lang, f in self.embedded):
                 return "embedded forced track"
             if s.skip_if_external_forced and any(f and out.lang in langs for langs, f in self.external):
                 return "forced subtitle file"
@@ -579,6 +581,8 @@ def localize(cues: list[Cue], lang: str, models: ModelHolder, s: Settings,
     need: dict[str, list[str]] = {}
     for c in cues:
         if c.text_lang != lang and (c.text, c.text_lang, lang) not in cache:
+            if not languages.nllb(c.text_lang):
+                continue  # e.g. a Latin-language movie: its lines can't be translated, so they're left out
             need.setdefault(c.text_lang, []).append(c.text)
     if need:
         if s.device == "cuda" and "3.3B" in s.translation_model:
@@ -595,6 +599,7 @@ def localize(cues: list[Cue], lang: str, models: ModelHolder, s: Settings,
     result = []
     for c in cues:
         text = c.text if c.text_lang == lang else cache.get((c.text, c.text_lang, lang), "")
+        text = text.strip()
         if not text:
             continue
         if s.language_prefix and c.foreign:
@@ -619,9 +624,19 @@ CJK_LANGS = {"ja", "zh", "yue"}
 
 
 def _units(text: str, lang: str) -> tuple[list[str], str]:
-    """Split text into wrap units: words, or single characters for CJK scripts."""
+    """Split text into wrap units: words, or single characters for CJK scripts.
+
+    For CJK, spaces NLLB puts between phrases are dropped, but a space between two
+    Latin-script words ("iPhone 15") is kept as its own unit.
+    """
     if lang in CJK_LANGS:
-        return [ch for ch in text if not ch.isspace()] or [text], ""
+        text = re.sub(r"\s+", " ", text.strip())
+        units = []
+        for i, ch in enumerate(text):
+            if ch == " " and not (text[i - 1].isascii() and text[i + 1].isascii()):
+                continue
+            units.append(ch)
+        return units or [text], ""
     return text.split(), " "
 
 

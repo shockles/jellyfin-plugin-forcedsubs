@@ -17,7 +17,7 @@ from .pipeline import ModelHolder, Settings, SkipItem, generate_subtitles
 def main() -> int:
     ap = argparse.ArgumentParser(description="Generate forced and/or full subtitles for one video")
     ap.add_argument("video")
-    ap.add_argument("--overwrite", action="store_true", help="Ignore existing forced subtitles")
+    ap.add_argument("--overwrite", action="store_true", help="Regenerate even if the subtitles already exist")
     ap.add_argument("--model", default=Settings.model)
     ap.add_argument("--device", default=Settings.device)
     ap.add_argument("--compute-type", default=Settings.compute_type)

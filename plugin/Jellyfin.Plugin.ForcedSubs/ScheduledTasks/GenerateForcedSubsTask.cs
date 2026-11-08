@@ -41,6 +41,7 @@ public class GenerateForcedSubsTask : IScheduledTask
         await _client.HealthAsync(cancellationToken).ConfigureAwait(false); // fail fast if the service is down
 
         var items = _selector.GetCandidates(config);
+        _logger.LogInformation("Subtitle task: {Count} candidate items", items.Count);
         var currentSignature = ForcedSubsClient.Signature(config);
         var processed = 0;
         for (var n = 0; n < items.Count; n++)
@@ -66,13 +67,14 @@ public class GenerateForcedSubsTask : IScheduledTask
                     _logger.LogInformation("{Name}: {Status} {Message}", item.Name, done?.Status, done?.Message);
                 }
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                throw;
+                throw; // the task itself was cancelled
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Forced subtitles failed for {Path}", item.Path);
+                // Includes HTTP timeouts (TaskCanceledException): log and move on to the next item.
+                _logger.LogWarning(ex, "Subtitles failed for {Path}", item.Path);
             }
 
             progress.Report(100.0 * (n + 1) / items.Count);
@@ -84,9 +86,27 @@ public class GenerateForcedSubsTask : IScheduledTask
     {
         try
         {
+            var failures = 0;
             while (true)
             {
-                var job = await _client.JobAsync(jobId, ct).ConfigureAwait(false);
+                ServiceJob? job;
+                try
+                {
+                    job = await _client.JobAsync(jobId, ct).ConfigureAwait(false);
+                    failures = 0;
+                }
+                catch (Exception ex) when (!ct.IsCancellationRequested && ex is HttpRequestException or TaskCanceledException)
+                {
+                    // Service busy or restarting: keep waiting for up to ~5 minutes.
+                    if (++failures > 100)
+                    {
+                        throw;
+                    }
+
+                    await Task.Delay(TimeSpan.FromSeconds(3), ct).ConfigureAwait(false);
+                    continue;
+                }
+
                 if (job is null || !job.IsActive)
                 {
                     return job;
@@ -96,7 +116,7 @@ public class GenerateForcedSubsTask : IScheduledTask
                 await Task.Delay(TimeSpan.FromSeconds(3), ct).ConfigureAwait(false);
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             // Task cancelled in Jellyfin: stop the running job too.
             try
