@@ -9,6 +9,14 @@
     "imageUrl": "",
     "versions": [
       {
+        "version": "0.3.0.0",
+        "changelog": "Generate subtitles from the ... menu of any movie or episode (web client, admins), with a notice when they're ready. Can be turned off in the plugin settings.",
+        "targetAbi": "12.4.0.0",
+        "sourceUrl": "https://github.com/shockles/jellyfin-plugin-forcedsubs/releases/download/v0.3.0/forced-subs-plugin_0.3.0.0.zip",
+        "checksum": "f1d38db70a693a63f525b189cd005804",
+        "timestamp": "2026-11-08T07:24:23Z"
+      },
+      {
         "version": "0.2.1.0",
         "changelog": "One-click Windows installer (Install-ForcedSubs.bat) attached to the release. Installer fixes: no longer mistakes the Microsoft Store python shortcut for Python, and the service finds a newly installed ffmpeg at logon.",
         "targetAbi": "12.4.0.0",
