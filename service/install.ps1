@@ -25,9 +25,13 @@ function Find-Python {
             if ($LASTEXITCODE -eq 0 -and $exe) { return $exe.Trim() }
         } catch { }
     }
+    # "python" may be the Microsoft Store shortcut, which isn't real Python: check it runs.
     $cmd = Get-Command python -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
-    throw "Python 3.10-3.13 not found. Install it from https://www.python.org/downloads/ and run this again."
+    if ($cmd) {
+        $ver = & $cmd.Source -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>$null
+        if ($LASTEXITCODE -eq 0 -and $ver -match '^3\.(1[0-3])$') { return $cmd.Source }
+    }
+    throw "Python 3.10-3.13 not found. Install it from https://www.python.org/downloads/ (or run Install-ForcedSubs.bat) and run this again."
 }
 
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {

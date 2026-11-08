@@ -24,12 +24,25 @@ There are two parts:
 
 ## Install on the server PC
 
-### 1. Requirements
+### Easiest: one click
+1. Download **`Install-ForcedSubs.bat`** from the
+   [latest release](https://github.com/shockles/jellyfin-plugin-forcedsubs/releases/latest)
+   onto the PC that runs Jellyfin, and double-click it.
+2. It installs Python and ffmpeg if they're missing, downloads the service into
+   `C:\ForcedSubs`, downloads the models (~6.5 GB the first time), makes the
+   service start when you log in, and checks that it's running.
+3. Add the plugin in Jellyfin (step 3 below).
+
+Run it again any time to update the service to the latest release.
+
+### Or step by step
+
+#### 1. Requirements
 - NVIDIA driver (an RTX 4060 is fine; the model uses about 3 GB of VRAM)
-- Python 3.10–3.13 from python.org
+- Python 3.10â€“3.13 from python.org
 - ffmpeg on PATH: `winget install Gyan.FFmpeg`
 
-### 2. Service
+#### 2. Service
 Download `forced-subs-service_<version>.zip` from the
 [latest release](https://github.com/shockles/jellyfin-plugin-forcedsubs/releases/latest)
 and unzip it on the server (for example to `C:\ForcedSubs\service`). Then, in PowerShell:
@@ -45,7 +58,7 @@ it if you only want English), checks that it runs on the GPU, and registers a
 scheduled task that starts the service when you log in. To run it by hand instead, use `.\start.ps1`. Check that it's up
 by opening http://127.0.0.1:8796/health in a browser.
 
-### 3. Plugin
+#### 3. Plugin
 1. In Jellyfin, go to **Dashboard > Plugins > Repositories**, press **+**, and add:
    - Name: `Forced Subtitles`
    - URL: `https://raw.githubusercontent.com/shockles/jellyfin-plugin-forcedsubs/main/manifest.json`
