@@ -1,4 +1,4 @@
-"""Run the pipeline on one file from the command line (handy for testing).
+﻿"""Run the pipeline on one file from the command line (handy for testing).
 
     python -m forced_subs.cli "D:\\Movies\\Some Movie (2020)\\Some Movie.mkv" --overwrite
 """
@@ -11,11 +11,11 @@ import logging
 import sys
 from pathlib import Path
 
-from .pipeline import ModelHolder, Settings, SkipItem, generate_forced_subtitles
+from .pipeline import ModelHolder, Settings, SkipItem, generate_subtitles
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Generate forced English subtitles for one video")
+    ap = argparse.ArgumentParser(description="Generate forced and/or full subtitles for one video")
     ap.add_argument("video")
     ap.add_argument("--overwrite", action="store_true", help="Ignore existing forced subtitles")
     ap.add_argument("--model", default=Settings.model)
@@ -38,7 +38,7 @@ def main() -> int:
             last[0] = line
 
     try:
-        res = generate_forced_subtitles(Path(args.video), ModelHolder(), settings,
+        res = generate_subtitles(Path(args.video), ModelHolder(), settings,
                                         overwrite=args.overwrite, progress=progress)
     except SkipItem as e:
         print(f"\nSkipped: {e}")

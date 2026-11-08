@@ -1,4 +1,4 @@
-"""Local HTTP service the Jellyfin plugin talks to.
+﻿"""Local HTTP service the Jellyfin plugin talks to.
 
 Jobs run one at a time on a single worker thread. The Whisper model is loaded
 when a job starts and unloaded after ``idle_unload`` seconds with an empty
@@ -36,7 +36,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from . import __version__
-from .pipeline import Cancelled, ModelHolder, Settings, SkipItem, generate_forced_subtitles
+from .pipeline import Cancelled, ModelHolder, Settings, SkipItem, generate_subtitles
 
 log = logging.getLogger("forced_subs")
 
@@ -48,6 +48,7 @@ class JobRequest(BaseModel):
     overwrite: bool = False
     item_id: Optional[str] = None
     options: dict = Field(default_factory=dict)
+    signature: Optional[str] = None  # what was asked for; the plugin redoes items when it changes
 
 
 class History:
@@ -114,7 +115,7 @@ class JobRunner:
             jid = uuid.uuid4().hex[:12]
             job = {
                 "id": jid, "path": path, "item_id": req.item_id, "overwrite": req.overwrite,
-                "options": req.options, "status": "queued", "stage": "Waiting", "progress": 0.0,
+                "options": req.options, "signature": req.signature, "status": "queued", "stage": "Waiting", "progress": 0.0,
                 "message": "", "output": None, "created": time.time(), "started": None, "finished": None,
             }
             self.jobs[jid] = job
@@ -199,7 +200,7 @@ class JobRunner:
                 self._update(_jid, stage=stage, progress=round(float(fraction), 3))
 
             try:
-                res = generate_forced_subtitles(Path(path), self.models, settings,
+                res = generate_subtitles(Path(path), self.models, settings,
                                                 overwrite=overwrite, progress=progress)
                 status = "skipped" if res.status == "skipped" else "done"
                 self._update(jid, status=status, stage=res.status, progress=1.0,
@@ -220,6 +221,7 @@ class JobRunner:
                     self.history.put(done["path"], {
                         "status": done["status"], "stage": done["stage"], "message": done["message"],
                         "output": done["output"], "finished": done["finished"],
+                        "signature": done.get("signature"),
                     })
 
 

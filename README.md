@@ -1,9 +1,19 @@
 # Forced Subtitles for Jellyfin
 
-Finds the foreign-language lines in a mostly English movie (a few lines of
-Russian, Japanese, and so on), translates only those lines to English with
-Whisper large-v3, and writes `Movie.en.forced.srt` next to the movie. Jellyfin
-shows forced subtitles automatically when English audio is playing.
+Makes subtitles for your movies on your own GPU, with no cloud service:
+
+- **Forced subtitles:** only the foreign-language lines in a mostly English movie
+  (a few lines of Russian, Japanese, and so on), e.g. `Movie.en.forced.srt`.
+  Jellyfin shows these automatically when English audio is playing.
+- **Full subtitles:** every line of dialogue, e.g. `Movie.en.srt`.
+- **In any of 97 languages:** pick as many as you like, e.g. English, Spanish
+  and Japanese gives `Movie.en.srt`, `Movie.es.srt`, `Movie.ja.srt` and the
+  matching forced files.
+
+English comes straight from Whisper large-v3, including its translation of the
+foreign lines. Other languages are translated from that English with Meta's
+NLLB-200 model, which adds roughly a minute per language for a full movie.
+A Spanish forced subtitle leaves out lines that are already spoken in Spanish.
 
 There are two parts:
 
@@ -29,9 +39,10 @@ cd C:\ForcedSubs\service
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -AutoStart
 ```
 
-This installs everything, downloads the Whisper large-v3 model (~3 GB), checks
-that it runs on the GPU, and registers a scheduled task that starts the service
-when you log in. To run it by hand instead, use `.\start.ps1`. Check that it's up
+This installs everything, downloads the Whisper large-v3 model (~3 GB) and the
+NLLB-200 3.3B translation model (~3.3 GB; add `-TranslationModel none` to skip
+it if you only want English), checks that it runs on the GPU, and registers a
+scheduled task that starts the service when you log in. To run it by hand instead, use `.\start.ps1`. Check that it's up
 by opening http://127.0.0.1:8796/health in a browser.
 
 ### 3. Plugin
@@ -72,12 +83,13 @@ need a restart.
 
 | Section | Options |
 |---|---|
+| What to make | Forced subtitles, full subtitles, and which of the 97 subtitle languages (searchable list) |
 | Detection | Sensitivity preset (low / normal / high / custom), main language, languages you don't need subtitled, only-these-languages |
-| Existing subtitles & audio | Skip items with an embedded forced track, skip items with a `.forced` file, preferred audio languages, skip items without them, ignore commentary tracks |
-| Subtitle output | `en` or `eng` file tag, also mark as default, "[Russian]" language labels, characters per line, lines per subtitle, min/max seconds on screen, extra phrases to drop |
+| Existing subtitles & audio | Skip items with an embedded forced track, skip items with a `.forced` file, don't make full subtitles in a language the item already has, preferred audio languages, skip items without them, ignore commentary tracks |
+| Subtitle output | Two- or three-letter language tag in file names, mark forced as default, "[Russian]" language labels, characters per line, lines per subtitle, min/max seconds on screen, extra phrases to drop |
 | Library task & automation | Auto-process new items (with a delay), movies and/or episodes, which libraries, only items added in the last N days, minimum runtime, max items per run, retry failures, forget all |
 | Service connection | Address, API key, request timeout, path mappings |
-| Model & GPU | Whisper model, GPU or CPU, precision, beam size, idle seconds before the model is unloaded |
+| Model & GPU | Whisper model, GPU or CPU, precision, translation model (NLLB-200 3.3B or 1.3B), beam sizes, full-subtitle batch size, idle seconds before models are unloaded |
 | Advanced detection tuning | Confidence thresholds, short-line rules, speech detection threshold, window and batch sizes, translation chunking |
 
 ## Things to know
@@ -94,6 +106,15 @@ need a restart.
   in the plugin), so the GPU goes back to idle.
 - Logs: `service\data\service.log`. A record of what has been processed:
   `service\data\history.json`.
+- The library task redoes an item when you change what to make (add a language,
+  turn on full subtitles). Files that already exist are kept; only the missing
+  ones are written.
+- **Translation quality:** good enough to follow a movie, not professional.
+  Very short lines ("Good evening.") are the weakest spot; the 3.3B model
+  handles them much better than 1.3B. Latin, Breton and Hawaiian are
+  recognised in speech but can't be subtitle languages.
+- **Licenses:** Whisper is MIT. NLLB-200 is CC-BY-NC-4.0: free for personal,
+  non-commercial use.
 - **Limits:** made-up languages (Elvish, Klingon) can't be translated. Very
   short exclamations ("Da!") may be missed, because the tool needs more
   confidence on short lines. Movies with foreign subtitles burned into the

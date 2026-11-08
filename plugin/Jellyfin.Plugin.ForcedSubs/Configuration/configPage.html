@@ -33,6 +33,27 @@
                 <p class="fieldDescription">Settings apply to the next job; the service doesn't need a restart.</p>
 
                 <details class="fsSection" open>
+                    <summary>What to make</summary>
+                    <label class="checkboxContainer">
+                        <input is="emby-checkbox" type="checkbox" data-key="MakeForced" />
+                        <span>Forced subtitles: only the foreign-language lines (<code>Movie.en.forced.srt</code>)</span>
+                    </label>
+                    <label class="checkboxContainer">
+                        <input is="emby-checkbox" type="checkbox" data-key="MakeFull" />
+                        <span>Full subtitles: every line of dialogue (<code>Movie.en.srt</code>)</span>
+                    </label>
+                    <input type="hidden" data-key="SubtitleLanguages" id="fsSubtitleLanguages" />
+                    <div class="fieldDescription" style="margin-top:1em;">
+                        Subtitle languages (<span id="fsLangCount">0</span> selected). English comes straight from Whisper;
+                        other languages are translated from it with NLLB-200, which adds about a minute per language for a full movie.
+                    </div>
+                    <div class="inputContainer" style="margin-top:.5em;">
+                        <input is="emby-input" type="search" id="fsLangFilter" label="Filter languages" autocomplete="off" />
+                    </div>
+                    <div id="fsLangGrid" class="fsLangGrid"></div>
+                </details>
+
+                <details class="fsSection">
                     <summary>Detection</summary>
                     <div class="selectContainer">
                         <select is="emby-select" id="fsSensitivity" data-key="Sensitivity" label="Sensitivity">
@@ -66,6 +87,10 @@
                         <input is="emby-checkbox" type="checkbox" data-key="SkipIfExternalForced" />
                         <span>Skip items that already have a <code>.forced</code> subtitle file</span>
                     </label>
+                    <label class="checkboxContainer">
+                        <input is="emby-checkbox" type="checkbox" data-key="SkipExistingFull" />
+                        <span>Don't make full subtitles in a language the item already has subtitles in</span>
+                    </label>
                     <div class="inputContainer">
                         <input is="emby-input" type="text" data-key="AudioLanguages" label="Preferred audio track languages" />
                         <div class="fieldDescription">Which audio track to listen to, in order, e.g. <code>eng</code>. Falls back to the default track.</div>
@@ -83,14 +108,14 @@
                 <details class="fsSection">
                     <summary>Subtitle output</summary>
                     <div class="selectContainer">
-                        <select is="emby-select" data-key="OutputLanguageTag" label="Language tag in the file name">
-                            <option value="en">en (Movie.en.forced.srt)</option>
-                            <option value="eng">eng (Movie.eng.forced.srt)</option>
+                        <select is="emby-select" data-key="LanguageTagStyle" label="Language tag in the file name">
+                            <option value="1">Two letters (Movie.en.srt, Movie.es.srt)</option>
+                            <option value="2">Three letters (Movie.eng.srt, Movie.spa.srt)</option>
                         </select>
                     </div>
                     <label class="checkboxContainer">
                         <input is="emby-checkbox" type="checkbox" data-key="MarkDefault" />
-                        <span>Also mark as default (<code>.default.forced.srt</code>)</span>
+                        <span>Mark forced subtitles as default (<code>.default.forced.srt</code>)</span>
                     </label>
                     <label class="checkboxContainer">
                         <input is="emby-checkbox" type="checkbox" data-key="LanguagePrefix" />
@@ -185,9 +210,18 @@
                             <option value="float32">float32</option>
                         </select>
                     </div>
+                    <div class="selectContainer">
+                        <select is="emby-select" data-key="TranslationModel" label="Translation model (languages other than English)">
+                            <option value="nllb-3.3B">NLLB-200 3.3B (best, ~3.3 GB VRAM)</option>
+                            <option value="nllb-1.3B">NLLB-200 1.3B (faster, weaker on short lines)</option>
+                        </select>
+                        <div class="fieldDescription">NLLB-200 is free for personal, non-commercial use. With 3.3B on an 8 GB card, Whisper is unloaded while it translates.</div>
+                    </div>
                     <div class="fsGrid">
-                        <div class="inputContainer"><input is="emby-input" type="number" min="1" max="10" data-key="BeamSize" label="Beam size (higher = slower, slightly better)" /></div>
-                        <div class="inputContainer"><input is="emby-input" type="number" min="5" max="3600" data-key="IdleUnloadSeconds" label="Unload model after N idle seconds" /></div>
+                        <div class="inputContainer"><input is="emby-input" type="number" min="1" max="10" data-key="BeamSize" label="Whisper beam size (higher = slower, slightly better)" /></div>
+                        <div class="inputContainer"><input is="emby-input" type="number" min="1" max="10" data-key="TranslationBeamSize" label="Translation beam size" /></div>
+                        <div class="inputContainer"><input is="emby-input" type="number" min="1" max="32" data-key="TranscribeBatchSize" label="Full-subtitle batch size (lower if out of VRAM)" /></div>
+                        <div class="inputContainer"><input is="emby-input" type="number" min="5" max="3600" data-key="IdleUnloadSeconds" label="Unload models after N idle seconds" /></div>
                     </div>
                 </details>
 
@@ -230,6 +264,9 @@
         .fsTag.failed { background: rgba(220,70,70,.4); }
         .fsTag.running { background: rgba(0,164,220,.35); }
         .fsRow button { margin: 0; }
+        .fsLangGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(11em, 1fr)); gap: 0 1em; max-height: 22em; overflow-y: auto; padding-right: .5em; }
+        .fsLangGrid .checkboxContainer { margin-bottom: .3em; }
+        .fsLangGrid .fsHidden { display: none; }
         @media (max-width: 40em) { .fsRow { flex-wrap: wrap; } }
     </style>
 
@@ -242,7 +279,40 @@
                 normal: { ForeignMinProb: 0.60, ShortLineMinProb: 0.85, RefineBelow: 0.90 },
                 high:   { ForeignMinProb: 0.45, ShortLineMinProb: 0.75, RefineBelow: 0.95 }
             };
+            // Whisper languages that NLLB-200 can translate into (Latin, Breton and Hawaiian can't be targets).
+            var LANGS = [
+                ['en','English'],['af','Afrikaans'],['sq','Albanian'],['am','Amharic'],['ar','Arabic'],['hy','Armenian'],['as','Assamese'],
+                ['az','Azerbaijani'],['ba','Bashkir'],['eu','Basque'],['be','Belarusian'],['bn','Bengali'],['bs','Bosnian'],['bg','Bulgarian'],
+                ['my','Burmese'],['yue','Cantonese'],['ca','Catalan'],['zh','Chinese'],['hr','Croatian'],['cs','Czech'],['da','Danish'],
+                ['nl','Dutch'],['et','Estonian'],['fo','Faroese'],['fi','Finnish'],['fr','French'],['gl','Galician'],['ka','Georgian'],
+                ['de','German'],['el','Greek'],['gu','Gujarati'],['ht','Haitian Creole'],['ha','Hausa'],['he','Hebrew'],['hi','Hindi'],
+                ['hu','Hungarian'],['is','Icelandic'],['id','Indonesian'],['it','Italian'],['ja','Japanese'],['jw','Javanese'],['kn','Kannada'],
+                ['kk','Kazakh'],['km','Khmer'],['ko','Korean'],['lo','Lao'],['lv','Latvian'],['ln','Lingala'],['lt','Lithuanian'],
+                ['lb','Luxembourgish'],['mk','Macedonian'],['mg','Malagasy'],['ms','Malay'],['ml','Malayalam'],['mt','Maltese'],['mi','Maori'],
+                ['mr','Marathi'],['mn','Mongolian'],['ne','Nepali'],['no','Norwegian'],['nn','Norwegian Nynorsk'],['oc','Occitan'],['ps','Pashto'],
+                ['fa','Persian'],['pl','Polish'],['pt','Portuguese'],['pa','Punjabi'],['ro','Romanian'],['ru','Russian'],['sa','Sanskrit'],
+                ['sr','Serbian'],['sn','Shona'],['sd','Sindhi'],['si','Sinhala'],['sk','Slovak'],['sl','Slovenian'],['so','Somali'],
+                ['es','Spanish'],['su','Sundanese'],['sw','Swahili'],['sv','Swedish'],['tl','Tagalog'],['tg','Tajik'],['ta','Tamil'],
+                ['tt','Tatar'],['te','Telugu'],['th','Thai'],['bo','Tibetan'],['tr','Turkish'],['tk','Turkmen'],['uk','Ukrainian'],
+                ['ur','Urdu'],['uz','Uzbek'],['vi','Vietnamese'],['cy','Welsh'],['yi','Yiddish'],['yo','Yoruba']
+            ];
             var pollTimer = null, searchTimer = null, config = null, jobsBusy = false;
+
+            function renderLanguages(selectedCsv) {
+                var selected = (selectedCsv || '').toLowerCase().split(/[\s,;]+/).filter(Boolean);
+                page.querySelector('#fsLangGrid').innerHTML = LANGS.map(function (l) {
+                    return '<label class="checkboxContainer" data-name="' + esc(l[1].toLowerCase() + ' ' + l[0]) + '">' +
+                        '<input is="emby-checkbox" type="checkbox" class="fsLang" value="' + l[0] + '"' +
+                        (selected.indexOf(l[0]) >= 0 ? ' checked' : '') + ' /><span>' + esc(l[1]) + '</span></label>';
+                }).join('');
+                syncLanguages();
+            }
+
+            function syncLanguages() {
+                var codes = Array.prototype.map.call(page.querySelectorAll('.fsLang:checked'), function (x) { return x.value; });
+                page.querySelector('#fsSubtitleLanguages').value = codes.join(',');
+                page.querySelector('#fsLangCount').textContent = codes.length;
+            }
 
             function esc(s) {
                 return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -295,12 +365,18 @@
                 ApiClient.getPluginConfiguration(pluginId).then(function (c) {
                     config = c;
                     fields().forEach(function (el) { writeField(el, c[el.getAttribute('data-key')]); });
+                    renderLanguages(c.SubtitleLanguages || 'en');
                     loadLibraries(c.LibraryIds || []);
                 });
             }
 
             function saveConfig(e) {
                 e.preventDefault();
+                syncLanguages();
+                if (!page.querySelector('#fsSubtitleLanguages').value) {
+                    Dashboard.alert('Pick at least one subtitle language.');
+                    return false;
+                }
                 Dashboard.showLoadingMsg();
                 ApiClient.getPluginConfiguration(pluginId).then(function (c) {
                     fields().forEach(function (el) {
@@ -428,6 +504,15 @@
             });
 
             page.querySelector('#fsSensitivity').addEventListener('change', function () { applyPreset(this.value); });
+
+            page.querySelector('#fsLangGrid').addEventListener('change', syncLanguages);
+
+            page.querySelector('#fsLangFilter').addEventListener('input', function () {
+                var q = this.value.trim().toLowerCase();
+                Array.prototype.forEach.call(page.querySelectorAll('#fsLangGrid .checkboxContainer'), function (el) {
+                    el.classList.toggle('fsHidden', !!q && el.getAttribute('data-name').indexOf(q) < 0);
+                });
+            });
 
             Array.prototype.forEach.call(page.querySelectorAll('[data-tuning]'), function (el) {
                 el.addEventListener('input', function () { page.querySelector('#fsSensitivity').value = 'custom'; });

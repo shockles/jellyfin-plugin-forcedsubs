@@ -9,7 +9,10 @@
 
 param(
     [switch]$AutoStart,
-    [string]$Model = "large-v3"
+    [string]$Model = "large-v3",
+    # Also download the translation model used for subtitle languages other than English
+    # (nllb-3.3B ~3.3 GB, nllb-1.3B ~1.4 GB). Use "none" to skip; it downloads on first use anyway.
+    [string]$TranslationModel = "nllb-3.3B"
 )
 
 $ErrorActionPreference = "Stop"
@@ -47,6 +50,13 @@ Write-Host "Installing packages (this can take a few minutes)..."
 Write-Host "Downloading and testing the $Model model on the GPU..."
 & .\.venv\Scripts\python.exe -c "import forced_subs.cuda_setup; from faster_whisper import WhisperModel; WhisperModel('$Model', device='cuda', compute_type='int8_float16'); print('Model OK on GPU')"
 if ($LASTEXITCODE -ne 0) { throw "Model test failed. See the error above." }
+
+if ($TranslationModel -ne "none") {
+    Write-Host "Downloading the $TranslationModel translation model..."
+    $env:HF_HUB_DISABLE_SYMLINKS_WARNING = "1"
+    & .\.venv\Scripts\python.exe -c "from huggingface_hub import snapshot_download; from forced_subs.translate import MODELS; snapshot_download(MODELS.get('$TranslationModel', '$TranslationModel')); print('Translation model OK')"
+    if ($LASTEXITCODE -ne 0) { Write-Warning "Translation model download failed; it will be retried on first use." }
+}
 
 if ($AutoStart) {
     $action = New-ScheduledTaskAction -Execute "powershell.exe" `

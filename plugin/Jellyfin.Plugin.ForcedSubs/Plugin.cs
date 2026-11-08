@@ -1,4 +1,4 @@
-using Jellyfin.Plugin.ForcedSubs.Configuration;
+﻿using Jellyfin.Plugin.ForcedSubs.Configuration;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Plugins;
 using MediaBrowser.Model.Plugins;
@@ -25,7 +25,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     public override Guid Id => Guid.Parse("221cf741-9df3-4388-ad06-8761cce21b32");
 
     public override string Description =>
-        "Translates only the foreign-language lines of a movie into a forced English subtitle, using a local Whisper service.";
+        "Makes forced subtitles (just the foreign-language lines) and/or full subtitles in any of 97 languages, using a local Whisper service.";
 
     public IEnumerable<PluginPageInfo> GetPages()
     {

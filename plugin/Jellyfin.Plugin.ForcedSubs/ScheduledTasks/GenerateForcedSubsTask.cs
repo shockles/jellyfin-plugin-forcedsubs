@@ -1,4 +1,4 @@
-using Jellyfin.Plugin.ForcedSubs.Configuration;
+﻿using Jellyfin.Plugin.ForcedSubs.Configuration;
 using Jellyfin.Plugin.ForcedSubs.Services;
 using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.Logging;
@@ -25,13 +25,13 @@ public class GenerateForcedSubsTask : IScheduledTask
         _logger = logger;
     }
 
-    public string Name => "Generate forced subtitles";
+    public string Name => "Generate subtitles";
 
     public string Key => "ForcedSubsGenerateLibrary";
 
-    public string Description => "Finds foreign-language lines in items that haven't been checked yet and writes forced English subtitles for them.";
+    public string Description => "Makes forced and/or full subtitles, in the chosen languages, for items that haven't been done with the current settings.";
 
-    public string Category => "Forced Subtitles";
+    public string Category => "Whisper Subtitles";
 
     public IEnumerable<TaskTriggerInfo> GetDefaultTriggers() => Array.Empty<TaskTriggerInfo>();
 
@@ -41,6 +41,7 @@ public class GenerateForcedSubsTask : IScheduledTask
         await _client.HealthAsync(cancellationToken).ConfigureAwait(false); // fail fast if the service is down
 
         var items = _selector.GetCandidates(config);
+        var currentSignature = ForcedSubsClient.Signature(config);
         var processed = 0;
         for (var n = 0; n < items.Count; n++)
         {
@@ -54,8 +55,10 @@ public class GenerateForcedSubsTask : IScheduledTask
             var item = items[n];
             try
             {
-                var previous = await _client.HistoryStatusAsync(item.Path, cancellationToken).ConfigureAwait(false);
-                if (previous is null || (previous == "failed" && config.RetryFailed))
+                var (status, signature) = await _client.HistoryAsync(item.Path, cancellationToken).ConfigureAwait(false);
+                if (status is null
+                    || (status == "failed" && config.RetryFailed)
+                    || (status != "failed" && signature != currentSignature))
                 {
                     processed++;
                     var job = await _monitor.SubmitAsync(item, overwrite: false, cancellationToken).ConfigureAwait(false);

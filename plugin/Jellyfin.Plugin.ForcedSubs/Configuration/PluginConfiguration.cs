@@ -8,6 +8,14 @@ namespace Jellyfin.Plugin.ForcedSubs.Configuration;
 /// </summary>
 public class PluginConfiguration : BasePluginConfiguration
 {
+    // ---- What to make
+    public bool MakeForced { get; set; } = true;
+
+    public bool MakeFull { get; set; }
+
+    /// <summary>Gets or sets the subtitle languages, comma-separated Whisper codes (e.g. "en,es,ja").</summary>
+    public string SubtitleLanguages { get; set; } = "en";
+
     // ---- Connection
     public string ServiceUrl { get; set; } = "http://127.0.0.1:8796";
 
@@ -28,6 +36,12 @@ public class PluginConfiguration : BasePluginConfiguration
     public int BeamSize { get; set; } = 5;
 
     public int IdleUnloadSeconds { get; set; } = 60;
+
+    public int TranscribeBatchSize { get; set; } = 8;
+
+    public string TranslationModel { get; set; } = "nllb-3.3B";
+
+    public int TranslationBeamSize { get; set; } = 4;
 
     // ---- Audio track
     public string AudioLanguages { get; set; } = "eng";
@@ -73,8 +87,12 @@ public class PluginConfiguration : BasePluginConfiguration
 
     public bool SkipIfExternalForced { get; set; } = true;
 
+    public bool SkipExistingFull { get; set; } = true;
+
     // ---- Output
-    public string OutputLanguageTag { get; set; } = "en";
+
+    /// <summary>Gets or sets the file name language tag: "1" = Movie.en.srt, "2" = Movie.eng.srt.</summary>
+    public string LanguageTagStyle { get; set; } = "1";
 
     public bool MarkDefault { get; set; }
 

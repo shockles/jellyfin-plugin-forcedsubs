@@ -71,12 +71,32 @@ public class ForcedSubsClient
         return await resp.Content.ReadFromJsonAsync<ServiceJob>(Json, ct).ConfigureAwait(false);
     }
 
-    /// <summary>Last recorded result for a file, or null if the service has never processed it.</summary>
-    public async Task<string?> HistoryStatusAsync(string path, CancellationToken ct)
+    /// <summary>Last recorded result for a file: (status, signature), or (null, null) if never processed.</summary>
+    public async Task<(string? Status, string? Signature)> HistoryAsync(string path, CancellationToken ct)
     {
         var doc = await Http().GetFromJsonAsync<JsonElement>(
             $"{BaseUrl}/history?path={Uri.EscapeDataString(MapPath(path))}", Json, ct).ConfigureAwait(false);
-        return doc.ValueKind == JsonValueKind.Object && doc.TryGetProperty("status", out var s) ? s.GetString() : null;
+        if (doc.ValueKind != JsonValueKind.Object)
+        {
+            return (null, null);
+        }
+
+        string? Get(string name) => doc.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+        return (Get("status"), Get("signature"));
+    }
+
+    /// <summary>
+    /// Describes what a job is asked to produce. The library task redoes an item when this
+    /// changes, e.g. after adding a subtitle language or turning on full subtitles.
+    /// </summary>
+    public static string Signature(PluginConfiguration c)
+    {
+        var langs = c.SubtitleLanguages
+            .Split(new[] { ',', ';', ' ', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(l => l.ToLowerInvariant())
+            .Distinct()
+            .Order(StringComparer.Ordinal);
+        return $"forced={c.MakeForced};full={c.MakeFull};langs={string.Join(',', langs)}";
     }
 
     /// <summary>Forget one file (path != null) or every file, so the library task checks it again.</summary>
@@ -91,12 +111,14 @@ public class ForcedSubsClient
 
     public async Task<ServiceJob> SubmitAsync(string path, string itemId, bool overwrite, CancellationToken ct)
     {
+        var config = Config;
         var body = new
         {
             path = MapPath(path),
             overwrite,
             item_id = itemId,
-            options = BuildOptions(Config),
+            options = BuildOptions(config),
+            signature = Signature(config),
         };
         using var resp = await Http().PostAsJsonAsync($"{BaseUrl}/jobs", body, Json, ct).ConfigureAwait(false);
         await EnsureOk(resp, ct).ConfigureAwait(false);
@@ -116,6 +138,14 @@ public class ForcedSubsClient
     /// <summary>Options the service applies to one job (snake_case = the service's Settings fields).</summary>
     internal static Dictionary<string, object> BuildOptions(PluginConfiguration c) => new()
     {
+        ["make_forced"] = c.MakeForced,
+        ["make_full"] = c.MakeFull,
+        ["subtitle_languages"] = c.SubtitleLanguages,
+        ["transcribe_batch_size"] = c.TranscribeBatchSize,
+        ["translation_model"] = c.TranslationModel,
+        ["translation_beam_size"] = c.TranslationBeamSize,
+        ["skip_existing_full"] = c.SkipExistingFull,
+        ["language_tag_style"] = c.LanguageTagStyle,
         ["model"] = c.Model,
         ["device"] = c.Device,
         ["compute_type"] = c.ComputeType,
@@ -140,7 +170,6 @@ public class ForcedSubsClient
         ["drop_phrases"] = c.DropPhrases,
         ["skip_if_embedded_forced"] = c.SkipIfEmbeddedForced,
         ["skip_if_external_forced"] = c.SkipIfExternalForced,
-        ["output_language_tag"] = c.OutputLanguageTag,
         ["mark_default"] = c.MarkDefault,
         ["language_prefix"] = c.LanguagePrefix,
         ["max_line_chars"] = c.MaxLineChars,
