@@ -58,21 +58,42 @@ named `Forced Subtitles_<version>` inside Jellyfin's plugins folder (usually
 - **Whole library:** Dashboard > Scheduled Tasks > **Generate forced subtitles**.
   It processes one movie at a time and skips anything it has already checked.
   It has no schedule by default; you can add one there.
+- **New movies automatically:** turn on "Automatically process new items" in the
+  plugin settings. New items are queued a set number of minutes after they're added.
+- Running jobs can be cancelled from *Recent jobs*. **Forget** on a search result
+  (or "Forget all checked items" in settings) makes the library task check items again.
 - Movies that already have a forced subtitle (an embedded forced track or a
   `.forced` file) are skipped unless you tick "Redo".
 - If a movie has no foreign dialogue, no file is written.
 
+## Settings
+Everything is on the plugin page and applies to the next job; the service doesn't
+need a restart.
+
+| Section | Options |
+|---|---|
+| Detection | Sensitivity preset (low / normal / high / custom), main language, languages you don't need subtitled, only-these-languages |
+| Existing subtitles & audio | Skip items with an embedded forced track, skip items with a `.forced` file, preferred audio languages, skip items without them, ignore commentary tracks |
+| Subtitle output | `en` or `eng` file tag, also mark as default, "[Russian]" language labels, characters per line, lines per subtitle, min/max seconds on screen, extra phrases to drop |
+| Library task & automation | Auto-process new items (with a delay), movies and/or episodes, which libraries, only items added in the last N days, minimum runtime, max items per run, retry failures, forget all |
+| Service connection | Address, API key, request timeout, path mappings |
+| Model & GPU | Whisper model, GPU or CPU, precision, beam size, idle seconds before the model is unloaded |
+| Advanced detection tuning | Confidence thresholds, short-line rules, speech detection threshold, window and batch sizes, translation chunking |
+
 ## Things to know
-- **The service and Jellyfin must see the same file paths.** If your library is
-  on a network share, use UNC paths (`\\NAS\Movies`) rather than mapped drive
-  letters, and make sure the Windows user running the service can read the
-  share and write to it.
-- The service only listens on 127.0.0.1, so it can't be reached from other PCs.
-- The model loads when a job starts and unloads after 60 seconds of no work, so
-  the GPU goes back to idle. Change this with `--idle-unload` in `start.ps1`.
+- **The service and Jellyfin must see the same files.** If your library is on a
+  network share, use UNC paths (`\\NAS\Movies`) rather than mapped drive letters,
+  and make sure the Windows user running the service can read the share and
+  write to it. If the service sees the files at different paths (another PC,
+  Docker), add **path mappings** in the plugin settings, e.g.
+  `D:\Movies => /media/movies`.
+- By default the service only listens on 127.0.0.1. To run it on another
+  machine, start it with `--host 0.0.0.0 --api-key <secret>` and put the same key
+  in the plugin's API key setting.
+- The model loads when a job starts and unloads after 60 seconds of no work (set
+  in the plugin), so the GPU goes back to idle.
 - Logs: `service\data\service.log`. A record of what has been processed:
-  `service\data\history.json`. Delete an entry there to have the library task
-  check that movie again.
+  `service\data\history.json`.
 - **Limits:** made-up languages (Elvish, Klingon) can't be translated. Very
   short exclamations ("Da!") may be missed, because the tool needs more
   confidence on short lines. Movies with foreign subtitles burned into the
@@ -83,9 +104,10 @@ named `Forced Subtitles_<version>` inside Jellyfin's plugins folder (usually
 cd service
 .\.venv\Scripts\python.exe -m forced_subs.cli "D:\Movies\Some Movie (2020)\Some Movie.mkv" --overwrite
 ```
+Any setting can be overridden with `-o`, e.g. `-o skip_languages=es,fr -o language_prefix=true`.
 
 ## Releasing a new version
-Bump nothing by hand. Push an annotated tag and GitHub Actions does the rest:
+No version numbers to edit. Push an annotated tag and GitHub Actions does the rest:
 
 ```powershell
 git tag -a v0.2.0 -m "What changed in this version"
@@ -98,11 +120,3 @@ The tag message becomes the changelog Jellyfin shows.
 
 ## License
 GPL-3.0, like Jellyfin itself.
-
-## Tuning
-The settings at the top of `service\forced_subs\pipeline.py` (`Settings` class):
-- `foreign_min_prob` (0.60): raise it if English lines get flagged as foreign;
-  lower it if foreign lines are missed.
-- `short_line_min_prob` (0.85): the same, for lines under 1.2 seconds.
-- `refine_below` (0.90): windows where English confidence is below this get
-  checked line by line. Raising it catches more but runs slower.

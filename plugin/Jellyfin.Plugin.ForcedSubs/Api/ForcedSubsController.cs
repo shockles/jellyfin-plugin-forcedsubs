@@ -19,25 +19,18 @@ public class ForcedSubsController : ControllerBase
 {
     private readonly ILibraryManager _libraryManager;
     private readonly ForcedSubsClient _client;
+    private readonly JobMonitor _monitor;
 
-    public ForcedSubsController(ILibraryManager libraryManager, ForcedSubsClient client)
+    public ForcedSubsController(ILibraryManager libraryManager, ForcedSubsClient client, JobMonitor monitor)
     {
         _libraryManager = libraryManager;
         _client = client;
+        _monitor = monitor;
     }
 
     [HttpGet("Health")]
-    public async Task<ActionResult> Health(CancellationToken ct)
-    {
-        try
-        {
-            return Ok(await _client.HealthAsync(ct).ConfigureAwait(false));
-        }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
-        {
-            return StatusCode(StatusCodes.Status502BadGateway, new { ok = false, error = ex.Message });
-        }
-    }
+    public Task<ActionResult> Health(CancellationToken ct)
+        => Proxy(async () => Ok(await _client.HealthAsync(ct).ConfigureAwait(false)));
 
     [HttpGet("Search")]
     public ActionResult Search([FromQuery] string? term, [FromQuery] int limit = 40)
@@ -68,21 +61,12 @@ public class ForcedSubsController : ControllerBase
             return NotFound(new { error = "Item not found" });
         }
 
-        try
-        {
-            var job = await _client.SubmitAsync(item, overwrite, ct).ConfigureAwait(false);
-            return Ok(job);
-        }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
-        {
-            return StatusCode(StatusCodes.Status502BadGateway, new { error = ex.Message });
-        }
+        return await Proxy(async () => Ok(await _monitor.SubmitAsync(item, overwrite, ct).ConfigureAwait(false))).ConfigureAwait(false);
     }
 
     [HttpGet("Jobs")]
-    public async Task<ActionResult> Jobs([FromQuery] int limit = 30, CancellationToken ct = default)
-    {
-        try
+    public Task<ActionResult> Jobs([FromQuery] int limit = 30, CancellationToken ct = default)
+        => Proxy(async () =>
         {
             var jobs = await _client.JobsAsync(Math.Clamp(limit, 1, 200), ct).ConfigureAwait(false);
             return Ok(jobs.Select(j => new
@@ -97,10 +81,39 @@ public class ForcedSubsController : ControllerBase
                 j.Finished,
                 Name = NameFor(j),
             }));
-        }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        });
+
+    [HttpPost("Jobs/{jobId}/Cancel")]
+    public Task<ActionResult> Cancel([FromRoute] string jobId, CancellationToken ct)
+        => Proxy(async () => Ok(await _client.CancelAsync(jobId, ct).ConfigureAwait(false)));
+
+    /// <summary>Forget one item so the library task checks it again.</summary>
+    [HttpPost("Forget/{itemId}")]
+    public async Task<ActionResult> Forget([FromRoute] Guid itemId, CancellationToken ct)
+    {
+        var item = _libraryManager.GetItemById(itemId);
+        if (item?.Path is null)
         {
-            return StatusCode(StatusCodes.Status502BadGateway, new { error = ex.Message });
+            return NotFound(new { error = "Item not found" });
+        }
+
+        return await Proxy(async () => Ok(new { removed = await _client.ForgetAsync(item.Path, ct).ConfigureAwait(false) })).ConfigureAwait(false);
+    }
+
+    /// <summary>Forget every item so the library task checks the whole library again.</summary>
+    [HttpDelete("History")]
+    public Task<ActionResult> ClearHistory(CancellationToken ct)
+        => Proxy(async () => Ok(new { removed = await _client.ForgetAsync(null, ct).ConfigureAwait(false) }));
+
+    private async Task<ActionResult> Proxy(Func<Task<ActionResult>> call)
+    {
+        try
+        {
+            return await call().ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException or System.Text.Json.JsonException)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, new { ok = false, error = ex.Message });
         }
     }
 
@@ -135,7 +148,7 @@ public class ForcedSubsController : ControllerBase
             var stem = System.IO.Path.GetFileNameWithoutExtension(item.Path);
             if (dir is not null && Directory.Exists(dir))
             {
-                hasForced = Directory.EnumerateFiles(dir, stem + "*")
+                hasForced = Directory.EnumerateFiles(dir, stem + "*.*")
                     .Any(f => System.IO.Path.GetFileName(f).Contains(".forced", StringComparison.OrdinalIgnoreCase));
             }
         }

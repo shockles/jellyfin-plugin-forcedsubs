@@ -1,12 +1,9 @@
-using System.Collections.Concurrent;
+using System.Globalization;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using MediaBrowser.Controller.Entities;
-using MediaBrowser.Controller.Library;
-using MediaBrowser.Controller.Providers;
-using MediaBrowser.Model.IO;
-using Microsoft.Extensions.Logging;
+using Jellyfin.Plugin.ForcedSubs.Configuration;
 
 namespace Jellyfin.Plugin.ForcedSubs.Services;
 
@@ -27,171 +24,156 @@ public class ServiceJob
     [JsonIgnore] public bool IsActive => Status is "queued" or "running";
 }
 
-/// <summary>Talks to the local service and refreshes items when their subtitles are ready.</summary>
+/// <summary>Thin HTTP client for the service. Stateless; reads the current plugin configuration per call.</summary>
 public class ForcedSubsClient
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     private readonly IHttpClientFactory _httpFactory;
-    private readonly ILibraryManager _libraryManager;
-    private readonly IProviderManager _providerManager;
-    private readonly IFileSystem _fileSystem;
-    private readonly ILogger<ForcedSubsClient> _logger;
-    private readonly ConcurrentDictionary<string, Guid> _watching = new();
 
-    public ForcedSubsClient(
-        IHttpClientFactory httpFactory,
-        ILibraryManager libraryManager,
-        IProviderManager providerManager,
-        IFileSystem fileSystem,
-        ILogger<ForcedSubsClient> logger)
+    public ForcedSubsClient(IHttpClientFactory httpFactory)
     {
         _httpFactory = httpFactory;
-        _libraryManager = libraryManager;
-        _providerManager = providerManager;
-        _fileSystem = fileSystem;
-        _logger = logger;
     }
 
-    private static string BaseUrl => (Plugin.Instance?.Configuration.ServiceUrl ?? "http://127.0.0.1:8796").TrimEnd('/');
+    private static PluginConfiguration Config => Plugin.Instance?.Configuration ?? new PluginConfiguration();
+
+    private static string BaseUrl => Config.ServiceUrl.TrimEnd('/');
 
     private HttpClient Http()
     {
+        var config = Config;
         var c = _httpFactory.CreateClient("ForcedSubs");
-        c.Timeout = TimeSpan.FromSeconds(30);
+        c.Timeout = TimeSpan.FromSeconds(Math.Clamp(config.RequestTimeoutSeconds, 5, 600));
+        c.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        if (!string.IsNullOrWhiteSpace(config.ApiKey))
+        {
+            c.DefaultRequestHeaders.Add("X-Api-Key", config.ApiKey.Trim());
+        }
+
         return c;
     }
 
-    public async Task<JsonElement> HealthAsync(CancellationToken ct)
-    {
-        return await Http().GetFromJsonAsync<JsonElement>($"{BaseUrl}/health", Json, ct).ConfigureAwait(false);
-    }
+    public Task<JsonElement> HealthAsync(CancellationToken ct)
+        => Http().GetFromJsonAsync<JsonElement>($"{BaseUrl}/health", Json, ct);
 
     public async Task<List<ServiceJob>> JobsAsync(int limit, CancellationToken ct)
-    {
-        return await Http().GetFromJsonAsync<List<ServiceJob>>($"{BaseUrl}/jobs?limit={limit}", Json, ct).ConfigureAwait(false)
-            ?? new List<ServiceJob>();
-    }
+        => await Http().GetFromJsonAsync<List<ServiceJob>>($"{BaseUrl}/jobs?limit={limit}", Json, ct).ConfigureAwait(false)
+           ?? new List<ServiceJob>();
 
-    public async Task<ServiceJob?> JobAsync(string id, CancellationToken ct)
+    public Task<ServiceJob?> JobAsync(string id, CancellationToken ct)
+        => Http().GetFromJsonAsync<ServiceJob>($"{BaseUrl}/jobs/{Uri.EscapeDataString(id)}", Json, ct);
+
+    public async Task<ServiceJob?> CancelAsync(string id, CancellationToken ct)
     {
-        return await Http().GetFromJsonAsync<ServiceJob>($"{BaseUrl}/jobs/{Uri.EscapeDataString(id)}", Json, ct).ConfigureAwait(false);
+        using var resp = await Http().PostAsync($"{BaseUrl}/jobs/{Uri.EscapeDataString(id)}/cancel", null, ct).ConfigureAwait(false);
+        await EnsureOk(resp, ct).ConfigureAwait(false);
+        return await resp.Content.ReadFromJsonAsync<ServiceJob>(Json, ct).ConfigureAwait(false);
     }
 
     /// <summary>Last recorded result for a file, or null if the service has never processed it.</summary>
     public async Task<string?> HistoryStatusAsync(string path, CancellationToken ct)
     {
         var doc = await Http().GetFromJsonAsync<JsonElement>(
-            $"{BaseUrl}/history?path={Uri.EscapeDataString(path)}", Json, ct).ConfigureAwait(false);
+            $"{BaseUrl}/history?path={Uri.EscapeDataString(MapPath(path))}", Json, ct).ConfigureAwait(false);
         return doc.ValueKind == JsonValueKind.Object && doc.TryGetProperty("status", out var s) ? s.GetString() : null;
     }
 
-    /// <summary>Queue a job for an item and start watching it so the item is refreshed when done.</summary>
-    public async Task<ServiceJob> SubmitAsync(BaseItem item, bool overwrite, CancellationToken ct)
+    /// <summary>Forget one file (path != null) or every file, so the library task checks it again.</summary>
+    public async Task<int> ForgetAsync(string? path, CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(item.Path))
-        {
-            throw new InvalidOperationException("Item has no file path.");
-        }
+        var url = path is null ? $"{BaseUrl}/history" : $"{BaseUrl}/history?path={Uri.EscapeDataString(MapPath(path))}";
+        using var resp = await Http().DeleteAsync(url, ct).ConfigureAwait(false);
+        await EnsureOk(resp, ct).ConfigureAwait(false);
+        var doc = await resp.Content.ReadFromJsonAsync<JsonElement>(Json, ct).ConfigureAwait(false);
+        return doc.TryGetProperty("removed", out var n) ? n.GetInt32() : 0;
+    }
 
-        var body = new { path = item.Path, overwrite, item_id = item.Id.ToString("N") };
+    public async Task<ServiceJob> SubmitAsync(string path, string itemId, bool overwrite, CancellationToken ct)
+    {
+        var body = new
+        {
+            path = MapPath(path),
+            overwrite,
+            item_id = itemId,
+            options = BuildOptions(Config),
+        };
         using var resp = await Http().PostAsJsonAsync($"{BaseUrl}/jobs", body, Json, ct).ConfigureAwait(false);
+        await EnsureOk(resp, ct).ConfigureAwait(false);
+        return await resp.Content.ReadFromJsonAsync<ServiceJob>(Json, ct).ConfigureAwait(false)
+               ?? throw new HttpRequestException("Empty response from service.");
+    }
+
+    private static async Task EnsureOk(HttpResponseMessage resp, CancellationToken ct)
+    {
         if (!resp.IsSuccessStatusCode)
         {
             var text = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             throw new HttpRequestException($"Service returned {(int)resp.StatusCode}: {text}");
         }
-
-        var job = await resp.Content.ReadFromJsonAsync<ServiceJob>(Json, ct).ConfigureAwait(false)
-            ?? throw new HttpRequestException("Empty response from service.");
-
-        if (_watching.TryAdd(job.Id, item.Id))
-        {
-            _ = Task.Run(() => WatchAsync(job.Id, item.Id));
-        }
-
-        return job;
     }
 
-    /// <summary>Wait for a job to finish (used by the library task).</summary>
-    public async Task<ServiceJob?> WaitAsync(string jobId, CancellationToken ct)
+    /// <summary>Options the service applies to one job (snake_case = the service's Settings fields).</summary>
+    internal static Dictionary<string, object> BuildOptions(PluginConfiguration c) => new()
     {
-        while (true)
-        {
-            ct.ThrowIfCancellationRequested();
-            var job = await JobAsync(jobId, ct).ConfigureAwait(false);
-            if (job is null || !job.IsActive)
-            {
-                return job;
-            }
+        ["model"] = c.Model,
+        ["device"] = c.Device,
+        ["compute_type"] = c.ComputeType,
+        ["beam_size"] = c.BeamSize,
+        ["idle_unload"] = c.IdleUnloadSeconds,
+        ["audio_languages"] = c.AudioLanguages,
+        ["require_audio_language"] = c.RequireAudioLanguage,
+        ["skip_commentary"] = c.SkipCommentary,
+        ["main_language"] = c.MainLanguage,
+        ["foreign_min_prob"] = c.ForeignMinProb,
+        ["short_line_min_prob"] = c.ShortLineMinProb,
+        ["short_line_seconds"] = c.ShortLineSeconds,
+        ["refine_below"] = c.RefineBelow,
+        ["vad_threshold"] = c.VadThreshold,
+        ["min_line_seconds"] = c.MinLineSeconds,
+        ["window_seconds"] = c.WindowSeconds,
+        ["batch_size"] = c.BatchSize,
+        ["skip_languages"] = c.SkipLanguages,
+        ["only_languages"] = c.OnlyLanguages,
+        ["max_chunk_seconds"] = c.MaxChunkSeconds,
+        ["merge_gap_seconds"] = c.MergeGapSeconds,
+        ["drop_phrases"] = c.DropPhrases,
+        ["skip_if_embedded_forced"] = c.SkipIfEmbeddedForced,
+        ["skip_if_external_forced"] = c.SkipIfExternalForced,
+        ["output_language_tag"] = c.OutputLanguageTag,
+        ["mark_default"] = c.MarkDefault,
+        ["language_prefix"] = c.LanguagePrefix,
+        ["max_line_chars"] = c.MaxLineChars,
+        ["max_lines"] = c.MaxLines,
+        ["min_cue_seconds"] = c.MinCueSeconds,
+        ["max_cue_seconds"] = c.MaxCueSeconds,
+    };
 
-            await Task.Delay(TimeSpan.FromSeconds(3), ct).ConfigureAwait(false);
-        }
-    }
-
-    private async Task WatchAsync(string jobId, Guid itemId)
+    /// <summary>Rewrite a Jellyfin path to the path the service sees, using the configured mappings.</summary>
+    public static string MapPath(string path)
     {
-        try
+        foreach (var raw in Config.PathMappings.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            ServiceJob? job;
-            var failures = 0;
-            while (true)
+            var parts = raw.Split("=>", 2, StringSplitOptions.TrimEntries);
+            if (parts.Length != 2 || parts[0].Length == 0)
             {
-                await Task.Delay(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
-                try
-                {
-                    job = await JobAsync(jobId, CancellationToken.None).ConfigureAwait(false);
-                    failures = 0;
-                }
-                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
-                {
-                    // Service restarted or briefly unreachable; give up after ~10 minutes.
-                    if (++failures > 120)
-                    {
-                        return;
-                    }
-
-                    continue;
-                }
-
-                if (job is null || !job.IsActive)
-                {
-                    break;
-                }
+                continue;
             }
 
-            if (job is { Status: "done" } && !string.IsNullOrEmpty(job.Output))
+            if (path.StartsWith(parts[0], true, CultureInfo.InvariantCulture))
             {
-                _logger.LogInformation("Forced subtitles ready for {ItemId}: {Message}", itemId, job.Message);
-                RefreshItem(itemId);
+                var rest = path[parts[0].Length..];
+                var target = parts[1];
+                // Mapping to a Linux/Docker path: use forward slashes for the remainder.
+                if (target.Contains('/', StringComparison.Ordinal) && !target.Contains('\\', StringComparison.Ordinal))
+                {
+                    rest = rest.Replace('\\', '/');
+                }
+
+                return target + rest;
             }
-            else if (job is not null)
-            {
-                _logger.LogInformation("Forced subtitle job for {ItemId} ended: {Status} {Message}", itemId, job.Status, job.Message);
-            }
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error watching forced subtitle job {JobId}", jobId);
-        }
-        finally
-        {
-            _watching.TryRemove(jobId, out _);
-        }
+
+        return path;
     }
-
-    /// <summary>Ask Jellyfin to rescan the item so it notices the new .forced.srt file.</summary>
-    public void RefreshItem(Guid itemId)
-    {
-        var options = new MetadataRefreshOptions(new DirectoryService(_fileSystem))
-        {
-            MetadataRefreshMode = MetadataRefreshMode.Default,
-            ImageRefreshMode = MetadataRefreshMode.Default,
-            ReplaceAllMetadata = false,
-            ReplaceAllImages = false,
-        };
-        _providerManager.QueueRefresh(itemId, options, RefreshPriority.High);
-    }
-
-    public BaseItem? GetItem(Guid id) => _libraryManager.GetItemById(id);
 }

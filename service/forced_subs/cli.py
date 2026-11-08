@@ -21,10 +21,14 @@ def main() -> int:
     ap.add_argument("--model", default=Settings.model)
     ap.add_argument("--device", default=Settings.device)
     ap.add_argument("--compute-type", default=Settings.compute_type)
+    ap.add_argument("--option", "-o", action="append", default=[], metavar="KEY=VALUE",
+                    help="Override any setting, e.g. -o skip_languages=es,fr -o language_prefix=true")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
-    settings = Settings(model=args.model, device=args.device, compute_type=args.compute_type)
+    overrides = dict(o.split("=", 1) for o in args.option if "=" in o)
+    settings = Settings(model=args.model, device=args.device,
+                        compute_type=args.compute_type).with_options(overrides)
     last = [""]
 
     def progress(stage: str, fraction: float) -> None:
@@ -34,7 +38,7 @@ def main() -> int:
             last[0] = line
 
     try:
-        res = generate_forced_subtitles(Path(args.video), ModelHolder(settings), settings,
+        res = generate_forced_subtitles(Path(args.video), ModelHolder(), settings,
                                         overwrite=args.overwrite, progress=progress)
     except SkipItem as e:
         print(f"\nSkipped: {e}")
