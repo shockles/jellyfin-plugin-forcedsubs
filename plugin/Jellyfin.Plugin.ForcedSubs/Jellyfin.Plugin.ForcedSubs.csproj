@@ -15,5 +15,6 @@
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Configuration\configPage.html" />
+    <EmbeddedResource Include="Web\menu.js" />
   </ItemGroup>
 </Project>

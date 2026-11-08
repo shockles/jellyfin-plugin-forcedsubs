@@ -122,6 +122,11 @@ public class PluginConfiguration : BasePluginConfiguration
 
     public int MaxItemsPerRun { get; set; }
 
+    // ---- Web client
+
+    /// <summary>Gets or sets a value indicating whether "Generate subtitles" is added to item menus (admins only).</summary>
+    public bool ShowInItemMenu { get; set; } = true;
+
     // ---- Automation
     public bool AutoProcessNewItems { get; set; }
 

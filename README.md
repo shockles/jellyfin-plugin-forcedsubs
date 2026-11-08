@@ -76,7 +76,12 @@ named `Forced Subtitles_<version>` inside Jellyfin's plugins folder (usually
 </details>
 
 ## Use it
-- **One movie:** on the plugin page, search for the title and press **Generate**.
+- **From any movie or episode:** open its **...** menu (on the item page or on its
+  card in a library) and choose **Generate subtitles**. A notice appears when the
+  subtitles are ready. Shown to administrators; turn it off under *Library task &
+  automation* in the plugin settings. The first time after installing or updating
+  the plugin, reload the Jellyfin page (Ctrl+F5) so the menu entry appears.
+- **One movie from the plugin page:** search for the title and press **Generate**.
   Progress shows under *Recent jobs*. When it finishes, Jellyfin rescans the
   movie and the subtitle appears as "English (Forced)".
 - **Whole library:** Dashboard > Scheduled Tasks > **Generate forced subtitles**.
